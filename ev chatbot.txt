@@ -1,0 +1,113 @@
+import pandas as pd
+import re
+import gradio as gr
+import os
+
+# --- 1. Data Loading and Preparation ---
+
+# The dataset will be loaded once when the application starts
+DATA_FILE = "driving_log.csv"
+control_data = None
+
+def load_data():
+    """Loads the CSV file and prepares the DataFrame."""
+    global control_data
+    if control_data is not None:
+        return True # Data already loaded
+
+    if not os.path.exists(DATA_FILE):
+        print(f"ERROR: {DATA_FILE} not found. Please ensure it is uploaded to your Space.")
+        return False
+
+    try:
+        df = pd.read_csv(DATA_FILE, header=None)
+        # Rename columns based on standard format
+        df.columns = ['Center_Image', 'Left_Image', 'Right_Image', 'Steering_Angle', 'Throttle', 'Brake', 'Speed']
+        
+        # Select only the numerical control columns for the chatbot
+        control_data = df[['Steering_Angle', 'Throttle', 'Brake', 'Speed']]
+        
+        print("🤖 Data loaded successfully.")
+        return True
+        
+    except Exception as e:
+        print(f"ERROR loading data: {e}")
+        control_data = None
+        return False
+
+# --- 2. Core Analysis Logic ---
+
+def analyze_data(query):
+    """
+    Analyzes the user query to determine the metric and column, 
+    and performs the corresponding data calculation.
+    """
+    if not load_data():
+        return "ERROR: Cannot load driving data. Please check the file."
+    
+    query_lower = query.lower()
+    
+    # --- Identify the requested metric/aggregation ---
+    if re.search(r'\b(average|mean)\b', query_lower):
+        metric = 'mean'
+    elif re.search(r'\b(maximum|max|highest)\b', query_lower):
+        metric = 'max'
+    elif re.search(r'\b(minimum|min|lowest)\b', query_lower):
+        metric = 'min'
+    elif re.search(r'\b(total|count|how many)\b', query_lower):
+        metric = 'count'
+    else:
+        return "I can only calculate the **average, maximum, minimum, or total count** for the driving controls. Please rephrase."
+
+    # --- Identify the target column ---
+    if re.search(r'\b(speed|velocity)\b', query_lower):
+        column = 'Speed'
+    elif re.search(r'\b(steer|steering angle)\b', query_lower):
+        column = 'Steering_Angle'
+    elif re.search(r'\b(throttle|acceleration)\b', query_lower):
+        column = 'Throttle'
+    elif re.search(r'\b(brake|braking)\b', query_lower):
+        column = 'Brake'
+    else:
+        return f"I found the request for '{metric}', but I'm not sure which control (Speed, Steering Angle, Throttle, or Brake) you are asking about."
+
+    # --- Execute the analysis ---
+    try:
+        data_series = control_data[column]
+        
+        if metric == 'mean':
+            result = data_series.mean()
+        elif metric == 'max':
+            result = data_series.max()
+        elif metric == 'min':
+            result = data_series.min()
+        elif metric == 'count':
+            result = data_series.count()
+
+        # Format and return the final response
+        return f"The **{metric}** value for the **{column.replace('_', ' ')}** recorded in the dataset is: **{result:.4f}**"
+        
+    except Exception as e:
+        return f"An internal error occurred during calculation: {e}"
+
+# --- 3. Gradio Interface ---
+
+# Load data on startup
+load_data() 
+
+# Example questions to guide the user
+examples = [
+    "What was the maximum speed?",
+    "Show me the average steering angle.",
+    "What is the minimum brake value?",
+    "How many records are in the log?"
+]
+
+gr.Interface(
+    fn=analyze_data,
+    inputs=gr.Textbox(lines=2, placeholder="Ask a question about the driving log data..."),
+    outputs="markdown",
+    title="Autonomous Driving Log Data Chatbot (NLP Query System)",
+    description="Ask statistical questions about the `driving_log.csv` file. I can calculate the **mean, max, min, and count** for the **Speed, Steering Angle, Throttle, and Brake** columns.",
+    examples=examples
+).launch(server_name="0.0.0.0", server_port=7860) # Standard ports for Hugging Face Spaces
